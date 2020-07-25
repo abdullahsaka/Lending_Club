@@ -1,0 +1,782 @@
+---
+title: "IDS 572 Assignment 1"
+author: "Britney Scott, Abdullah Saka"
+date: "2/8/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Background
+
+LendingClub is an American peer-to-peer lending company that offers an online platform for matching borrowers seeking loans and lenders looking to make an investment. It provides an online platform which enables borrowers and investors to pair with each other. Both individuals and institutions can participate as investors if they satisfy financial stability standards put forth by LendingClub ("Lending Club" 5-6). 
+
+LendingClub is appealing to investors because they can choose how much to fund each borrow at $25 increments ("Alternative Investments"). Investors who hold diverse portfolios with LendingClub historically have a positive return ("Your Return"). Investors have control over the amount of risk they choose to take on, and have access to risk grades from LendingClub. LendingClub grades all loans from A to G, with each grade being further divided into five subgrades based on factors such as the borrower's FICO score and loan amount ("LendingClub" 8-9). Because the notes have the status of unsecured creditors, there is a risk that investors may lose all or part of the money if LendingClub becomes insolvent, even if the ultimate borrower continues to payback money ("LendingClub" 12).
+
+Interest rates vary 6.03% to 26.06% between different types of loans and depend on a large number of factors regarding the borrower ("LendingClub" 3). A background check performed by LendingClub takes into consideration the borrower’s credit score, credit history, income, and other attributes which help to determine the loan grade. The minimum credit criteria for borrowers to obtain a loan is:
+
+* A minimum FICO score of 660
+* Below 35% debt-to-income ratio excluding mortgages
+* Good debt-to-income ratio including mortgages
+* At least 36 months of credit history
+* At least two open accounts
+* No more than 6 recent (last 6 months) inquiries ("LendingClub" 6)
+
+LendingClub makes money by charging fees to both the borrowers and the lenders. Borrowers pay an origination fee when the loan is given, and investors pay a service fee of 1% ("LendingClub" 10). LendingClub also charges investors collection fees when payments are missed by the borrower, if applicable ("Interest Rates and Fees").
+
+# Data Exploration
+
+The analysis will begin with some exploration of the provided data. The output vatiable indicates whether a loan defaulted or not.
+
+```{r setup, echo=FALSE, include=FALSE}
+lcdf <- read.csv("/Users/sakahome/Rprojects/LendingClub(Classification)/data_lendingClub/lcData4m.csv")
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(ggcorrplot)
+library(magrittr)
+library(rpart)
+library(ROCR)
+library(C50)
+library(knitr)
+library(caret)
+library(e1071)
+library(gridExtra)
+library(randomForest)
+
+attach(lcdf)
+knitr::opts_chunk$set(comment = NA)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=5, fig.height=3)
+```
+
+There are 13,652 defaulted loans in the dataset and 78,972 loans which were fully paid. About 14.74 per cent of the data represents defaulted loans. 
+
+```{r, echo=FALSE, fig.align='center'}
+#What is the proportion of defaults in the data?
+dat <- data.frame(table(lcdf$loan_status))
+names(dat) <- c("LoanStatus","Count")
+ggplot(data=dat, aes(x=LoanStatus, y=Count, fill=LoanStatus)) + geom_bar(stat="identity") + xlab("Loan Status") + ylab("Total Loans") + labs(fill = "Loan Status")
+```
+
+Loan grade seems to correlate with loan defaulting, as evident in the following graph. This is to be expected, because loans with better grades such as 'A' and 'B' are less risky. Only 5.17 per cent of the A grade loans defaulted as opposed to 45.07 per cent of G grade loans, the lowest grade.
+
+```{r, echo=FALSE, fig.align='center'}
+#How does default rate vary with loan grade? 
+dat <- data.frame(table(lcdf$loan_status, lcdf$grade))
+names(dat) <- c("LoanStatus","Grade", "count")
+ggplot(data=dat, aes(x=Grade, y=count, fill=LoanStatus)) + geom_bar(stat="identity") + xlab("Loan Grade") + ylab("Total Loans") + labs(fill = "Loan Status")
+knitr::opts_chunk$set(fig.width=9, fig.height=4)
+```
+
+Taking a closer look at the subgrades, we see even more variation. Within the 'B' rating, for example, 8.96 per cent of B1 rated loans, 11.39 of B3 rated loans, and 14.46 per cent of B5 rated loans defaulted. This, again, is to be expected as the ratings of the loans get progressively lower.
+
+```{r, echo=FALSE, fig.align='center'}
+#Does it vary with sub-grade?
+dat <- data.frame(table(lcdf$loan_status, lcdf$sub_grade))
+names(dat) <- c("LoanStatus","SubGrade", "Count")
+ggplot(data=dat, aes(x=SubGrade, y=Count, fill=LoanStatus)) + geom_bar(stat="identity") + xlab("Loan Sub Grade") + ylab("Total Loans") + labs(fill = "Loan Status")
+knitr::opts_chunk$set(fig.width=5, fig.height=3)
+```
+
+The number of loans within each grade category vary quite a bit, with B loans having the highest count of 29,523 loans. E, F and G categories contain only 3,309, 463, and 71 loans respectively. 
+
+The following plots show the number of loans in each grade, as well as in each subgrade. The large variation is evident.
+
+```{r, echo=FALSE, fig.align='center'}
+#How many loans are there in each grade?
+dat <- data.frame(table(lcdf$grade))
+names(dat) <- c("Grade", "Count")
+ggplot(data=dat, aes(x=Grade, y=Count, fill=Grade)) + geom_bar(stat="identity") + xlab("Loan Grade") + ylab("Total Loans") + theme(legend.position = "none")
+knitr::opts_chunk$set(fig.width=8, fig.height=3)
+```
+```{r, echo=FALSE, fig.align='center'}
+#How many in each sub-grade?
+dat <- data.frame(table(lcdf$sub_grade))
+names(dat) <- c("SubGrade", "Count")
+ggplot(data=dat, aes(x=SubGrade, y=Count, fill=SubGrade)) + geom_bar(stat="identity") + xlab("Loan Sub Grade") + ylab("Total Loans") + theme(legend.position = "none")
+```
+
+We also wanted to examine the average loan amount for each grade in the data. As observed from the plot , the average loan amount decreases as the grade worsens. This is to be expected as investors would invest in lower amount of loans as the the grade worsens. 
+
+```{r, echo=FALSE, fig.align='center'}
+#Do loan amounts vary by each grade? The average loan amount per each grade and subgrade.
+ggplot(lcdf, aes(x=grade, y=loan_amnt, fill=grade)) + geom_boxplot() + xlab("Loan Grade") + ylab("Average Loan Amount") + theme(legend.position = "none")
+```
+
+Interest rate varies drastically by the grade of the loan, as shown in the table below The same applies when subgrades are examined, and a steady increase in the interest rate can be seen with each step lower in subgrade. This is to be expected, since a lower grade indicates higher risk and therefore requires a higher rate of return.
+
+```{r, echo=FALSE, fig.align='center'}
+#Does interest rate vary by grade?
+lcdf$int_rate2 = as.numeric(gsub("%", "", lcdf$int_rate))
+x <- lcdf %>% 
+  group_by(grade) %>% 
+  summarise(average = mean(int_rate2))
+
+knitr::kable(x, align = c('c', 'c'), col.names=c("Loan Grade","Average Interest Rate"))
+```
+
+```{r, echo=FALSE, fig.align='center', message=FALSE}
+#Does interest rate vary by subgrade?
+x <- lcdf %>% 
+  group_by(sub_grade) %>% 
+  summarise(average = mean(int_rate2))
+
+knitr::kable(x, align = c('c', 'c'), col.names=c("Loan Sub Grade","Average Interest Rate"))
+knitr::opts_chunk$set(fig.width=5, fig.height=3)
+```
+
+The following boxplot helps to illustrate the increase in interest rate as the grade of the loan worsens.
+
+```{r, echo=FALSE, fig.align='center', message=FALSE}
+ggplot(lcdf, aes(x=grade, y=int_rate2, fill=grade)) + geom_boxplot(outlier.shape = NA) + xlab("Loan Grade") + ylab("Interest Rate") + theme(legend.position = "none")
+knitr::opts_chunk$set(fig.width=7, fig.height=3)
+```
+
+It's also important to look at what people are borrowing their money for. The vast majority of the loans in the dataset are for debt consolidation, with credit card refinancing in second place. The above graph shows the count of each purpose, as well as the proportion of that type of loan that defaulted. Credit card refinancing has the lowest default rate in the dataset. The highest default rate is for green loans, but there are only 59 total in the dataset of this category. 
+
+```{r, echo=FALSE, fig.align='center'}
+#What are people borrowing money for (purpose)? 
+dat <- data.frame(table(lcdf$title, lcdf$loan_status))
+names(dat) <- c("Purpose", "Outcome", "Count")
+ggplot(data=dat, aes(x=Purpose, y=Count, fill=Outcome)) +geom_bar(stat="identity") + scale_x_discrete(labels = abbreviate) + labs(fill = "Loan Status")
+knitr::opts_chunk$set(fig.width=7, fig.height=3)
+```
+
+The amount of money given varies depending on the purpose of the loan. The following boxplot illustrates these differences well. Vacation loans have the smallest average amount, while credit card refinancing loans are typically quite large. 
+
+```{r, echo=FALSE, fig.align='center'}
+#Average Amount of Loans by the purpose.
+ggplot(lcdf, aes(x=title, y=loan_amnt, fill=title)) + geom_boxplot(outlier.shape = NA) + scale_x_discrete(labels = abbreviate) + xlab("Loan Purpose") + ylab("Loan Amount") + labs(fill = "Loan Purpose") 
+```
+
+We also checked to see whether there was any change in loan purpose across grades. Debt consolidation is consistently the most frequent purpose across different grades, and green loans are always the rarest.
+
+```{r, echo=FALSE}
+#Purpose of loan amount by grade
+x <- table(lcdf$title, lcdf$grade)
+knitr::kable(x, align = c('c', 'c', 'c', 'c','c', 'c', 'c'))
+```
+
+Finally, we exawmined annual return for various loans. We can calculate annual return for each loan using the following equation:  
+$((Total Payment - Funded Amount)/Funded Amount)*(12/36)*100$
+
+Comparing the average return to the average interest rate, the two are negatively correlated. Across the different loan grades, as the interest rate increases, the annual return is decreasing. The average annual return of some of the lowest graded loans is even negative. This makes sense since we know the loans with lower grades are more likely to default. For the most part, the annual return increases as subgrade worsens too. The difference between interest rate and annual return is the smallest for the loans with better grades.
+
+```{r, echo=FALSE}
+#Calculate rate of annual return
+lcdf$annRet_percent = ((lcdf$total_pymnt-lcdf$funded_amnt)/lcdf$funded_amnt)*(12/36)*100
+
+x <- lcdf %>% 
+  group_by(grade) %>% 
+  summarise(AverageInterestRate = mean(int_rate2), AverageAnnualReturn = mean(annRet_percent ), Difference=AverageInterestRate-AverageAnnualReturn)
+knitr::kable(x, align = c('c', 'c', 'c', 'c'), col.names=c("Loan Grade","Average Interest Rate", "Average Annual Return", "Difference"))
+```
+
+```{r, echo=FALSE}
+x <- lcdf %>% 
+  group_by(sub_grade) %>% 
+  summarise(AverageInterestRate = mean(int_rate2), AverageAnnualReturn = mean(annRet_percent ), Difference=AverageInterestRate-AverageAnnualReturn)
+knitr::kable(x, align = c('c', 'c', 'c', 'c'), col.names=c("Loan Sub Grade","Average Interest Rate", "Average Annual Return", "Difference"))
+```
+
+As an investor, the type of loan you want to invest in depends on the level of risk you are willing to take on. While the lower grade loans are riskier, the potential return is clearly higher since the interest rate negatively correlated with the grade. We would choose the higher grade loans because we are not as interested in the risk associated with the lower loan grades.
+
+# Variable Exclusion and Manipulation
+
+We chose to add in a few additional derived attributes. 
+
+* Proportion of satisfactory bankcard accounts
+* Proportion of open accounts that are satisfactory
+* Ratio of amount funded by investor to total loan amount
+* Ratio of funded amount to annual income of borrower
+* Monthly debt percentage of borrower
+* Ratio of open acocunts to total accounts
+
+Boxplots for all of these attributes show how they vary between loans that were paid off and ones that defaulted.
+
+```{r, echo=FALSE}
+#Derived attributes
+
+#Proportion of satisfactory bankcard accounts 
+lcdf$propSatisBankcardAccts <- ifelse(lcdf$num_bc_tl>0, lcdf$num_bc_sats/lcdf$num_bc_tl, 0)
+
+#Proportion of Proportion of open accounts that are satisfactory
+lcdf$PropSatAcc <- ifelse(lcdf$total_acc>0, lcdf$num_sats/lcdf$total_acc, 0)
+
+#Ratio of amount funded by investor to total loan amount
+lcdf$PropFunAmt <- ifelse(lcdf$loan_amnt>0, lcdf$funded_amnt_inv/lcdf$loan_amnt, 0)
+
+#Ratio of funded amount to annual income of borrower
+lcdf$PropFundvsInc<- ifelse(lcdf$annual_inc>0, lcdf$funded_amnt_inv/lcdf$annual_inc, 0)
+
+#Monthly debt percentage of borrower- Gives insight to the financial burden of the loan amount on the borrower every month
+lcdf$mnthDebt <- (lcdf$installment/(lcdf$annual_inc/12))*100
+
+#Ratio of open accounts to total accounts
+lcdf$OpenRatio <- ifelse(lcdf$total_acc>0, lcdf$open_acc/lcdf$total_acc, 0)
+```
+
+```{r, echo=FALSE, fig.align='center'}
+#Boxplots for all of the derived variables
+
+plot1 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$propSatisBankcardAccts, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Proportion of Satisfactory ", paste("Bankcard Accounts")))) + theme(legend.position = "none")+ coord_flip()
+
+plot2 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$PropSatAcc, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Proportion of Satisfactory Accounts", paste("to Total Open Accounts")))) + theme(legend.position = "none")+ coord_flip()
+
+grid.arrange(plot1, plot2, ncol=2)
+
+plot1 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$PropFunAmt, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Ratio of Amount Funded by Investor", paste("to Total Loan Amount")))) + theme(legend.position = "none")+ coord_flip()
+
+plot2 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$PropFundvsInc, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Ratio of Funded Amount to Annual", paste("Income of Borrower")))) + theme(legend.position = "none")+ coord_flip()
+
+grid.arrange(plot1, plot2, ncol=2)
+
+plot1 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$mnthDebt, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Monthly Debt Percentage of", paste("Borrower")))) + theme(legend.position = "none")+ coord_flip()
+
+plot2 <- ggplot(lcdf, aes(x=lcdf$loan_status, y=lcdf$OpenRatio, fill = lcdf$loan_status)) + geom_boxplot() + xlab("Loan Status") + ylab(expression(atop("Ratio of Open Accounts to", paste("Total Accounts")))) + theme(legend.position = "none")+ coord_flip()
+
+grid.arrange(plot1, plot2, ncol=2)
+```
+
+```{r, echo=FALSE}
+#Removing NA values higher than 60%
+loan_data <- lcdf[, -which(colMeans(is.na(lcdf)) > 0.6)] 
+
+#Remove unnecessary columns for data leakage
+loan_data <- loan_data %>% select(-c(fico_range_low, fico_range_high, last_fico_range_high, last_fico_range_low, num_tl_120dpd_2m, num_tl_30dpd, acc_now_delinq, funded_amnt_inv, term, emp_title, pymnt_plan, title, zip_code, addr_state, out_prncp, out_prncp, out_prncp_inv, total_pymnt, total_pymnt_inv, total_rec_int, total_rec_late_fee, total_rec_prncp, recoveries, collection_recovery_fee, last_pymnt_d, last_pymnt_amnt, last_credit_pull_d, policy_code, debt_settlement_flag, hardship_flag, issue_d, earliest_cr_line, application_type, annRet_percent, int_rate))
+
+#Convert variable from factor to numeric
+loan_data$revol_util <- as.numeric(loan_data$revol_util)
+```
+
+We decided to remove all of the attributes with more than 60% missing values. This decreases the number of independent variables from 150 to 92. 
+
+Next, some variables which may cause leakage need to be removed. These are variables which have been updated after the loan was given. For example, FICO score is updated every time an individual goes through a credit check, so all variables including FICO score have been removed. Other variables which are updated include total payment and interest payments received to date. After removing these unnecessary columns, the total number of independent variables decreases further to 60 columns.
+
+Next, missing values must be addressed. For some columns, the absence of a value is meaningful. For example, a missing value for months since recent inquiry indicates that there has not been an inquiry. We cannot fill these fields with a zero, as that would indicate a very recent inquiry. For such columns, we filled the missing values with a number much higher than the maximum value for the column. Other columns with which we used this approach include months since oldest installment account opened, months since most rencent bankcard account opened, and months since last delinquency.
+
+In other cases, the NA truly indicates a missing value. For these columns, we replaced the missing values with the median for that column. We used this approach for revolving line utilization rate, total open to buy on revolving bankcards, ratio of current balance to credit limit for all bankcard accounts, and percentage of bankcards over 75% percent of their limit.
+
+```{r, echo=FALSE}
+#Replacing missing values
+
+#summary(loan_data$mths_since_last_delinq)
+loan_data<- loan_data %>%  tidyr::replace_na(list(mths_since_last_delinq = 500))
+loan_data<- loan_data %>% tidyr::replace_na(list(revol_until=median(loan_data$revol_until, na.rm=TRUE)))
+loan_data<- loan_data %>%  tidyr::replace_na(list(bc_open_to_buy=median(loan_data$bc_open_to_buy, na.rm=TRUE)))
+loan_data<- loan_data %>%  tidyr::replace_na(list(bc_util=median(loan_data$bc_util, na.rm=TRUE)))
+#summary(loan_data$mo_sin_old_il_acct)
+loan_data<- loan_data %>%  tidyr::replace_na(list(mo_sin_old_il_acct = 1000))
+#summary(loan_data$mths_since_recent_bc)
+loan_data<- loan_data %>%  tidyr::replace_na(list(mths_since_recent_bc = 1000))
+#summary(loan_data$mths_since_recent_inq)
+loan_data<- loan_data %>%  tidyr::replace_na(list(mths_since_recent_inq = 100))
+loan_data<- loan_data %>%  tidyr::replace_na(list(percent_bc_gt_75 =median(loan_data$percent_bc_gt_75 , na.rm=TRUE)))
+```
+
+# Decision Tree Models
+
+The first step of building decision tree models is splitting the data between training and testing sets. We chose to split the data at a ratio of 70:30. 
+
+### Information Model
+
+For the first decision tree, we used the information method with a minimum split of 30 and a complexity parameter of 0.0001. This performed at 88 per cent accuracy on the training set.
+
+```{r, echo=FALSE}
+# Set seed to produce same results
+set.seed(9)
+
+#change type of dependent variable as factor
+loan_data$loan_status <- factor(loan_data$loan_status, levels=c("Fully Paid", "Charged Off")) #
+nr<-nrow(loan_data)
+#Splitting data into training/testing sets using random sampling
+#Training: 70%, Testing: 30%
+trnIndex = sample(1:nr, size = round(0.7*nr), replace=FALSE)
+lcdfTrn <- loan_data[trnIndex, ] 
+lcdfTst <- loan_data[-trnIndex, ]
+
+summary(loan_data$loan_status)
+```
+
+```{r, echo=FALSE}
+#Information rpart model
+lcDT1 <- rpart(loan_status ~., data=lcdfTrn, method="class", parms = list(split = "information"), control = rpart.control(minsplit = 30, cp=0.0001))
+
+#Accuracy
+predTrn=predict(lcDT1, lcdfTrn, type='class')
+Metric <- c("Training Accuracy")
+Result <- c(round(mean(predTrn==lcdfTrn$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result))
+knitr::kable(p, align = c('c', 'c'))
+```
+
+As a different scenario, we have used 0.35 rather than 0.5 as a threshold. It indicates that when we determine the lower threshold for labeling, training accuracy is almost same with previous model, yet testing accuracy is likely to be lower (it is possible that distribution of different classes in terminal nodes are alike). Training and test accuracy of the model whose threshold is 0.35:
+
+```{r, echo=FALSE,fig.align='center'}
+#With a different threshold rather than 0.5
+CTHRESH=0.35
+predProbTrn=predict(lcDT1,lcdfTrn, type='prob')
+predTrnCT = ifelse(predProbTrn[, 'Charged Off'] > CTHRESH, 'Charged Off', 'Fully Paid')
+
+predProbTst=predict(lcDT1,lcdfTst, type='prob')
+predTstCT = ifelse(predProbTst[, 'Charged Off'] > CTHRESH, 'Charged Off', 'Fully Paid')
+
+#Performance metrics
+Metric <- c("Train Accuracy","Test Accuracy")
+ResultCT <- c(round(mean(predTrnCT==lcdfTrn$loan_status),2), round(mean(predTstCT==lcdfTst$loan_status),2))
+p_CT <- as.data.frame(cbind(Metric, ResultCT))
+knitr::kable(p_CT, align = c('c', 'c'), col.names=c("Metric", "Result"))
+```
+
+The first model's accuracy seemed rather high and leads to concerns about overfitting. After generating the model, we pruned it using a complexity parameter of 0.0003 in order to keep it at a manageable size and avoid small nodes which can lead to overfitting and lower accuracy on the validation data.
+
+This pruned model performed well on the training data, and has 86 per cent accuracy. On the testing data, the model performance decreases to 85 per cent accuracy.
+
+```{r, echo=FALSE}
+#Pruning the tree
+lcDT1p<- prune.rpart(lcDT1, cp=0.0003)
+```
+
+The confusion matrix and accuracy of the first model after pruning for the training data:
+
+```{r, echo=FALSE, fig.align='center'}
+#Confusion table for training data
+predTrn=predict(lcDT1p, lcdfTrn, type='class')
+x <- confusionMatrix(predTrn,lcdfTrn$loan_status)
+x$table
+
+#Accuracy
+Metric <- c("Training Accuracy")
+Result <- c(round(mean(predTrn==lcdfTrn$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result))
+knitr::kable(p, align = c('c', 'c'))
+```
+
+The confusion matrix and performance metrics of the first model after pruning for the testing data:
+
+```{r, echo=FALSE}
+#Confusion matrix for testing data
+predTst1=predict(lcDT1p, lcdfTst, type='class')
+x <- confusionMatrix(predTst1,lcdfTst$loan_status)
+x$table
+
+#Performance metrics
+Metric <- c("Test Accuracy","Precision Score","Recall Score")
+Result1 <- c(round(mean(predTst1==lcdfTst$loan_status),2), round(precision(predTst1,lcdfTst$loan_status),2), round(recall(predTst1,lcdfTst$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result1))
+knitr::kable(p, align = c('c', 'c'), col.names=c("Metric", "Result"))
+```
+
+```{r, echo=FALSE}
+#A second Information with different parameters to compare results
+lcDT1b <- rpart(loan_status ~., data=lcdfTrn, method="class", parms = list(split = "information"), control = rpart.control(minsplit = 30, cp=0.001))
+lcDT1bp<- prune.rpart(lcDT1b, cp=0.0003)
+predTst1b=predict(lcDT1bp, lcdfTst, type='class')
+Result1b <- c(round(mean(predTst1b==lcdfTst$loan_status),2), round(precision(predTst1b,lcdfTst$loan_status),2), round(recall(predTst1b,lcdfTst$loan_status),2))
+```
+
+### Gini Model
+
+Next, we created a second decision tree model using the same training and testing sets. All parameters were kept the same except for the method, which was changed from information to gini. Before pruning, this tree performed at 88 per cent accuracy on the training data.
+
+```{r, echo=FALSE}
+lcDT2 <- rpart(loan_status ~., data=lcdfTrn, method="class", parms = list(split = "gini"), control = rpart.control(minsplit = 30, cp=0.0001))
+
+#Accuracy
+predTrn=predict(lcDT2, lcdfTrn, type='class')
+Metric <- c("Training Accuracy")
+Result <- c(round(mean(predTrn==lcdfTrn$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result))
+knitr::kable(p, align = c('c', 'c'))
+```
+
+Once again, we chose to prune the tree to avoid overfitting. This model performs similarly on the training and testing data to the information model, with 86 per cent training and 85 per cent testing accuracy.
+
+The confusion matrix and accuracy of the second model after pruning for the training data:
+
+```{r, echo=FALSE}
+#Pruning the tree
+lcDT2p<- prune.rpart(lcDT2, cp=0.0003)
+#printcp(lcDT1p)
+
+#Confusion table for training data
+predTrn=predict(lcDT2p, lcdfTrn, type='class')
+x <- confusionMatrix(predTrn,lcdfTrn$loan_status)
+x$table
+
+#Accuracy
+Metric <- c("Training Accuracy")
+Result <- c(round(mean(predTrn==lcdfTrn$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result))
+knitr::kable(p, align = c('c', 'c'))
+```
+
+The confusion matrix and performance metrics of the second model after pruning for the testing data:
+
+```{r, echo=FALSE}
+#Confusion matrix for testing data
+predTst2=predict(lcDT2p, lcdfTst, type='class')
+x <- confusionMatrix(predTst2,lcdfTst$loan_status)
+x$table
+
+#Performance metrics
+Metric <- c("Test Accuracy","Precision Score","Recall Score")
+Result2 <- c(round(mean(predTst2==lcdfTst$loan_status),2), round(precision(predTst2,lcdfTst$loan_status),2), round(recall(predTst2,lcdfTst$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result2))
+knitr::kable(p, align = c('c', 'c'), col.names=c("Metric", "Result"))
+```
+
+```{r, echo=FALSE}
+#A second Gini with different parameters to compare results
+lcDT2b <- rpart(loan_status ~., data=lcdfTrn, method="class", parms = list(split = "gini"), control = rpart.control(minsplit = 30, cp=0.001))
+lcDT2bp<- prune.rpart(lcDT2b, cp=0.0003)
+predTst2b=predict(lcDT2bp, lcdfTst, type='class')
+Result2b <- c(round(mean(predTst2b==lcdfTst$loan_status),2), round(precision(predTst2b,lcdfTst$loan_status),2), round(recall(predTst2b,lcdfTst$loan_status),2))
+```
+
+### C5.0 Model
+
+Next, we chose to run a model using C5.0 to see how it compared to the rpart models. We selected confidence factor as 0.45 and the number of trials as 3. Overall, the C5.0 decision tree model performs slightly worse than other models on the valdation data with 83 per cent accuracy.
+
+The confusion matrix and accuracy of the C5.0 model for the training  data:
+
+```{r, echo=FALSE, fig.align='center'}
+# Run a model using 'C5.0'
+c_tree <- C5.0(as.factor(lcdfTrn$loan_status) ~., data = lcdfTrn, method = "class", trials = 3, control=C5.0Control(CF=0.45,earlyStopping =FALSE))
+
+#Confusion matrix for training data
+predTrn=predict(c_tree, lcdfTrn, type='class')
+x <- confusionMatrix(predTrn,lcdfTrn$loan_status)
+x$table
+
+#Accuracy
+Metric <- c("Training Accuracy")
+Result <- c(round(mean(predTrn==lcdfTrn$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result))
+knitr::kable(p, align = c('c', 'c'))
+```
+
+The confusion matrix and performance metrics of the C5.0 model for the testing data:
+
+```{r, echo=FALSE}
+#Confusion matrix for testing data
+predTst3=predict(c_tree,lcdfTst)
+x <- confusionMatrix(predTst3,lcdfTst$loan_status)
+x$table
+
+#Performance metrics
+Metric <- c("Test Accuracy","Precision Score","Recall Score")
+Result3 <- c(round(mean(predTst3==lcdfTst$loan_status),2), round(precision(predTst3,lcdfTst$loan_status),2), round(recall(predTst3,lcdfTst$loan_status),2))
+p <- as.data.frame(cbind(Metric, Result3))
+knitr::kable(p, align = c('c', 'c'), col.names=c("Metric", "Result"))
+```
+
+```{r, echo=FALSE}
+#A second C5.0 with different parameters to compare results
+c_treeb <- C5.0(as.factor(lcdfTrn$loan_status) ~., data = lcdfTrn, method = "class", trials = 8, control=C5.0Control(CF=0.55,earlyStopping =FALSE))
+predTst3b=predict(c_treeb,lcdfTst)
+Result3b <- c(round(mean(predTst3b==lcdfTst$loan_status),2), round(precision(predTst3b,lcdfTst$loan_status),2), round(recall(predTst3b,lcdfTst$loan_status),2))
+```
+
+### Comparing the Models
+
+We created an additional scenario for each of the three models by modifying the parameters to see how they would affect the metrics. For the rpart models, we modified the complexity parameter. Decreasing it lead to a slight increase in recall score but a slight decrease in precision score for both the information and the gini models. For C5.0, we modified both the trials and the confidence factor and were able to slightly improve the test accuracy and the recall score of our previous C5.0 model. Overall, the rpart models are slightly better performing than C5.0. 
+
+```{r, echo=FALSE}
+Information <- Result1
+Informationb <- Result1b
+Gini <- Result2
+Ginib <- Result2b
+C5.0 <- Result3
+C5.0b <- Result3b
+
+p <- as.data.frame(rbind(Information, Informationb, Gini, Ginib, C5.0, C5.0b))
+row.names(p) <- c("Information, minsplit=30, cp=0.0001", "Information, minsplit=30, cp=0.001", "Gini, minsplit=30, cp=0.0001", "Gini, minsplit=30, cp=0.001", "C5.0, trials=3, cf=0.45", "C5.0, trials=8, cf=0.55")
+knitr::kable(p, col.names =c("Test Accuracy","Precision Score","Recall Score"), align = c('c', 'c','c'))
+```
+
+ROC curves for each of the models are displayed below.
+
+```{r, echo=FALSE, fig.align='center'}
+par(mfrow=c(1,3))
+
+#Information ROC Curve
+score=predict(lcDT1p,lcdfTst, type="prob")[,"Charged Off"]
+pred2=prediction(score, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf1 <-performance(pred2, "tpr", "fpr")
+plot(aucPerf1, main="Information")
+abline(a=0, b= 1)
+
+#Gini ROC Curve
+score=predict(lcDT2p,lcdfTst, type="prob")[,"Charged Off"]
+pred2=prediction(score, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf2 <-performance(pred2, "tpr", "fpr")
+plot(aucPerf2, main="Gini")
+abline(a=0, b= 1)
+
+#C5.0 ROC Curve
+score=predict(c_tree,lcdfTst, type="prob")[,"Charged Off"]
+pred2=prediction(score, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf3 <-performance(pred2, "tpr", "fpr")
+plot(aucPerf3, main="C5.0")
+abline(a=0, b= 1)
+```
+
+Finally, we checked which variables are more important for decision tree. The model looks at the improvement measure to each variable in its split. The values of these improvements are summed up, and are then scaled relative to the best variable.
+
+These are the top ten attributes which carry more weight than other attributes (more statistically significant).
+
+```{r, echo=FALSE}
+imp_att<-as.data.frame(C5imp(c_tree,pct=FALSE))
+imp_att<-head(imp_att,15)
+knitr::kable(imp_att)
+```
+
+# Random Forest Model
+
+In order to further improve the accuracy of our predictions, we built some random forest models. These have an advantage to a single decision trees because they generate multiple trees in order to create a more robust model. In order to maximize the performance of the tree, we decided to build several models with increasing number of trees to see which performs best. First, we build a model with 40 trees.
+
+```{r, echo=FALSE}
+#Rf with ntree=40
+rf1 <- randomForest(loan_status ~ ., data=lcdfTrn, na.action = na.roughfix, ntree=40, importance=TRUE)
+
+#Confusion matrix for testing data
+predTst4=predict(rf1,lcdfTst)
+x1 <- confusionMatrix(predTst4,lcdfTst$loan_status)
+x1 <- x1$table
+x1
+```
+Second, we built a smiliar model with 70 trees.
+
+```{r, echo=FALSE}
+#Rf with ntree=70
+rf2 <- randomForest(loan_status ~ ., data=lcdfTrn, na.action = na.roughfix, ntree=70, importance=TRUE)
+
+#Confusion matrix for testing data
+predTst5=predict(rf2,lcdfTst)
+x2 <- confusionMatrix(predTst5,lcdfTst$loan_status)
+x2 <- x2$table
+x2
+```
+
+Finally, we built a model with 200 trees.
+
+```{r, echo=FALSE}
+#Rf with ntree=200
+rf3 <- randomForest(loan_status ~ ., data=lcdfTrn, na.action = na.roughfix, ntree=200, importance=TRUE)
+
+#Confusion matrix for testing data
+predTst6=predict(rf3,lcdfTst)
+x3 <- confusionMatrix(predTst6,lcdfTst$loan_status)
+x3 <- x3$table
+x3
+```
+
+Looking at the three confusion matrices, it can be seen that increasing the number of trees improves the ability of the model to predict fully paid loans correctly. However, the amount of correctly predicted charged off loans decreases as the number of trees is increased. Predicting charged off loans incorrectly as fully paid is much more costly than predicting fully paid loans as charged off. Therefore, the smaller model is actually better in this scenario.
+
+We saw something similar when comparing the performance metrics. 200 trees performs slightly worse than 40 and 70. 40 and 70 trees result in the same performance metrics, so it makes sense to use the less costly model of 40 trees.Besides, when tree size increases in random forest, model's ability to predict 'charged off' is lower so that model affects investment decision negatively.
+
+Overall, though, the random forest models do not performs much differently than the single trees.
+
+```{r, echo=FALSE}
+#Performance metrics
+Metric <- c("Test Accuracy","Precision Score","Recall Score")
+
+Result4 <- c(round((x1[1, 1] + x1[2, 2]) / sum(x1),2), round(precision(predTst4,lcdfTst$loan_status),2), round(recall(predTst4,lcdfTst$loan_status),2))
+
+Result5 <- c(round((x2[1, 1] + x2[2, 2]) / sum(x2),2), round(precision(predTst5,lcdfTst$loan_status),2), round(recall(predTst5,lcdfTst$loan_status),2))
+
+Result6 <- c(round((x3[1, 1] + x3[2, 2]) / sum(x3),2), round(precision(predTst6,lcdfTst$loan_status),2), round(recall(predTst6,lcdfTst$loan_status),2))
+
+p <- as.data.frame(cbind(Metric, Result4, Result5, Result6))
+knitr::kable(p, align = c('c', 'c', 'c', 'c'), col.names=c("Metric", "40 Trees", "70 Trees", "200 Trees"))
+```
+
+We plotted ROC curves for all random forest models and it can be clearly seen that there is no significant difference among models. However, the random forest model created with 40 trees is slightly better than other models. ROC curves for all three random forest models:
+
+```{r, echo=FALSE}
+par(mfrow=c(1,3))
+
+#ROC Curve for 40 Trees
+score40=predict(rf1,lcdfTst, type="prob")[,"Charged Off"]
+pred40=prediction(score40, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf40 <-performance(pred40, "tpr", "fpr")
+plot(aucPerf40, main="40 Trees",col='green')
+abline(a=0, b= 1)
+
+#ROC Curve for 70 Trees
+score70=predict(rf2,lcdfTst, type="prob")[,"Charged Off"]
+pred70=prediction(score70, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf70 <-performance(pred70, "tpr", "fpr")
+plot(aucPerf70, main="70 Trees",col='red')
+abline(a=0, b= 1)
+
+#ROC Curve for 200 Trees
+score200=predict(rf3,lcdfTst, type="prob")[,"Charged Off"]
+pred200=prediction(score200, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf200 <-performance(pred200, "tpr", "fpr")
+plot(aucPerf200, main="200 Trees",col='blue')
+abline(a=0, b= 1)
+```
+
+Lift curves for all three random forest models :
+
+```{r, echo=FALSE}
+par(mfrow=c(1,3))
+
+#Lift for 40 trees
+predTrnProb1=predict(rf1, lcdfTrn, type='prob')
+trnSc1 <- subset(lcdfTrn, select=c("loan_status"))
+trnSc1["score"]<-predTrnProb1[, 1]
+trnSc1<-trnSc1[order(trnSc1$score, decreasing=TRUE),]
+#str(trnSc1)
+#levels(trnSc1$loan_status)
+levels(trnSc1$loan_status)[1]<-1
+levels(trnSc1$loan_status)[2]<-0
+trnSc1$loan_status<-as.numeric(as.character(trnSc1$loan_status))
+#str(trnSc1)
+trnSc1$cumDefault<-cumsum(trnSc1$loan_status)
+#head(trnSc1)
+plot(seq(nrow(trnSc1)), trnSc1$cumDefault,type = "l", xlab='Cases', ylab='Defaults', main="40 Trees")
+
+#Lift for 70 trees
+predTrnProb2=predict(rf2, lcdfTrn, type='prob')
+trnSc2 <- subset(lcdfTrn, select=c("loan_status"))
+trnSc2["score"]<-predTrnProb2[, 1]
+trnSc2<-trnSc2[order(trnSc2$score, decreasing=TRUE),]
+#str(trnSc2)
+#levels(trnSc2$loan_status)
+levels(trnSc2$loan_status)[1]<-1
+levels(trnSc2$loan_status)[2]<-0
+trnSc2$loan_status<-as.numeric(as.character(trnSc2$loan_status))
+#str(trnSc2)
+trnSc2$cumDefault<-cumsum(trnSc2$loan_status)
+#head(trnSc2)
+plot(seq(nrow(trnSc2)), trnSc2$cumDefault,type = "l", xlab='Cases', ylab='Defaults', main="70 Trees")
+
+#Lift for 200 trees
+predTrnProb3=predict(rf3, lcdfTrn, type='prob')
+trnSc3 <- subset(lcdfTrn, select=c("loan_status"))
+trnSc3["score"]<-predTrnProb3[, 1]
+trnSc3<-trnSc3[order(trnSc3$score, decreasing=TRUE),]
+#str(trnSc3)
+#levels(trnSc3$loan_status)
+levels(trnSc3$loan_status)[1]<-1
+levels(trnSc3$loan_status)[2]<-0
+trnSc3$loan_status<-as.numeric(as.character(trnSc3$loan_status))
+#str(trnSc3)
+trnSc3$cumDefault<-cumsum(trnSc3$loan_status)
+#head(trnSc3)
+plot(seq(nrow(trnSc3)), trnSc3$cumDefault,type = "l", xlab='Cases', ylab='Defaults', main="200 Trees")
+```
+
+For the best random forest model, which had 40 trees, the most important variables are:
+
+```{r, echo=FALSE,fig.align='center',fig.height=7}
+varImpPlot(rf1, main="Random Forest with 40 Trees")
+#imp_rf<-as.data.frame(importance(rf1))
+#imp_rf<-head(imp_rf,10)
+#knitr::kable(imp_rf, align = c('c'))
+```
+
+Variables' importance are calculated based on two different selection methods such as MeanDecreaseAccuracy and MeanDecreaseGini. When the MeanDecreaseAccuracy is determined during the out of bag error calculation phase, the MeanDecreaseGini coefficient is a measure of how each variable contributes to the homogeneity of the nodes and leaves in the random forest. Therefore, the significant variables vary from method to method. Besides, these significant variables in which random forest found are different than variables in which C5.0 determined.
+
+# Cost-Based Performance
+
+To begin the cost analysis, we are calculating the return on the loans. To begin, we simply calculate the return based on the annual return of the loans, which was calculated during the data exploration.
+
+```{r, echo=FALSE, warning=FALSE} 
+x <- lcdf %>% 
+  group_by(grade) %>%
+  summarise(avgInterest=mean(int_rate2),stdInterest=sd(int_rate2),avgLoanAmt=mean(loan_amnt),avgPmnt=mean(total_pymnt),avgRet=mean(annRet_percent),stdRet=sd(annRet_percent))
+knitr::kable(x, col.names=c("Grade", "Avg. Interest", "SD of Interest", "Avg. Amount", "Avg. Payment", "Avg. Return", "SD of Return"), align = c('c', 'c', 'c', 'c', 'c', 'c'))
+```
+
+This isn't the best approach, though, because sometimes the loans do not receive their full interest rate if the loan is paid back early. We can use the period between the loan issue and the last payment date to determine how long it took to pay each loan off, and then use this to calculate a more accurate return rate based on the actual term of the loan.
+
+```{r, echo=FALSE, warning=FALSE}
+lcdf$last_pymnt_d <- paste(lcdf$last_pymnt_d, "-01", sep="")
+lcdf$last_pymnt_d <- parse_date_time(lcdf$last_pymnt_d, "myd")
+lcdf$actualTerm <- ifelse(lcdf$loan_status=="Fully Paid", as.duration(lcdf$issue_d %--% lcdf$last_pymnt_d)/dyears(1),3)
+lcdf$actualReturn <- ifelse(lcdf$actualTerm>0, ((lcdf$total_pymnt - lcdf$funded_amnt)/lcdf$funded_amnt)*(1/lcdf$actalTerm),0)
+lcdf$actualReturn <- ifelse(lcdf$actualTerm>0, ((lcdf$total_pymnt - lcdf$funded_amnt)/lcdf$funded_amnt)*(1/lcdf$actualTerm),0)
+
+x <- lcdf %>%
+  group_by(grade) %>% 
+  summarise(defaultRate=sum(loan_status=="Charged Off")/n(), avgInterest=mean(int_rate2), avgRet=mean(annRet_percent), avgActualTerm=mean(actualTerm), avgActualRet=mean(actualReturn)*100)
+knitr::kable(x, col.names=c("Grade", "Default Rate", "Avg. Interest", "Avg. Return", "Avg. Actual Term", "Avg. Actual Return"), align = c('c', 'c', 'c', 'c', 'c', 'c'))
+```
+
+Finally, in order to determine the costs for the cost analysis, we can use this more accurate return on the loans based on their outcome status. The following chart shows about a 12.3 per cent loss on loans that are charged off, and a 7.5 per cent profit on paid off loans.
+
+```{r, echo=FALSE}
+x <- lcdf %>% 
+  group_by(loan_status) %>%
+  summarise(intRate=mean(int_rate2), totRet=mean((total_pymnt - funded_amnt)/funded_amnt), avgActualRet=mean(actualReturn)*100)
+knitr::kable(x, col.names=c("Loan Status", "Interest Rate", "Total Return", "Total Actual Return"), align = c('c', 'c', 'c', 'c'))
+```
+
+We performed cost analysis regarding cost table above. Profit value is 8 and loss value (penalty) is 40. We selected bigger loss value since we wanted to decrease the risk. Also, threshold of labeling to points in random forest is 0.5. Lastly, we checked current interest rate of certificate of deposit. The nominal interest rate is 2%. This means you can get 5.6 profit if you put $100 into deposit account. Then, we plotted cumulative profit in this dataset. This plot demonstrates that we take into consideration 15,000 observations as an investment. After that point, risk of the investment increased gradually and you can face considerable loss. 
+
+Here is the cost table based on the rpart decision tree.
+
+```{r, echo=FALSE,fig.align='center',fig.height=4,warning=FALSE}
+#Incorporating profits & costs for rpart
+PROFITVAL <- 8 
+COSTVAL <- -40
+scoreTst <- predict(lcDT1p,lcdfTst, type="prob")[,"Fully Paid"]
+prPerf <- data.frame(scoreTst)
+prPerf <- cbind(prPerf, status=lcdfTst$loan_status)
+prPerf <- prPerf[order(-scoreTst) ,] 
+prPerf$profit <- ifelse(prPerf$status == 'Fully Paid', PROFITVAL, COSTVAL)
+prPerf$cumProfit <- cumsum(prPerf$profit)
+
+#to compare against the default approach of investing in CD 
+prPerf$cdRet <- 6
+prPerf$cumCDRet <- cumsum(prPerf$cdRet)
+
+plot(prPerf$cumProfit,xlab='The number of observations',ylab='Cumulative Profit',col='darkblue',main='Cost Analysis based on rpart')
+```
+
+In contrast, here is the cost table based on the optimal random forest with 40 trees.
+
+```{r, echo=FALSE,fig.align='center',fig.height=4,warning=FALSE}
+#Incorporating profits & costs for rf
+PROFITVAL <- 8 
+COSTVAL <- -40 
+scoreTst <- predict(rf1,lcdfTst, type="prob")[,"Fully Paid"] 
+prPerf <- data.frame(scoreTst)
+prPerf <- cbind(prPerf, status=lcdfTst$loan_status)
+prPerf <- prPerf[order(-scoreTst) ,]
+prPerf$profit <- ifelse(prPerf$status == 'Fully Paid', PROFITVAL, COSTVAL)
+prPerf$cumProfit <- cumsum(prPerf$profit)
+
+#to compare against the default approach of investing in CD 
+prPerf$cdRet <- 6
+prPerf$cumCDRet <- cumsum(prPerf$cdRet)
+
+plot(prPerf$cumProfit,xlab='The number of observations',ylab='Cumulative Profit',col='darkblue',main='Cost Analysis based on Random Forest')
+```
+
+This plot points out that we should consider around 18,000 observations as an investment. After that point, risk of the investment increased gradually and it is more likely to face loans at risk of default. 
+
+According to cost tables, we can say that random forest is slightly better than the rpart pruned decision tree because it detects more labels correctly, allowing us to make better profits.
+
+# Conclusions
+
+Detecting whether or not loans will default is important for all stakeholders in the LendingClub. Investors stand to lose about 12.3 per cent of their money when investing in loans that default, so accurately predicting this occurance is crucial. While most of the models in the report performed similarly, the best one we built is the random forest model with 40 trees. This model performs at 85 per cent accuracy on validation data, and while single trees meet similar performance standards, the random forest performs much better in the cost analysis. 
+
+# References:  
+
+“Alternative Investments: How It Works.” LendingClub, LendingClub Corporation, 2020,  
+www.lendingclub.com/investing/peer-to-peer.
+
+“Interest Rates and Fees.” LendingClub, LendingClub Corporation, 6 Aug. 2019,  
+www.lendingclub.com/investing/investor-education/interest-rates-and-fees.
+
+“LendingClub.” 424B3, U.S. Securities and Exchange Commission, 30 Apr. 2014,  
+www.sec.gov/Archives/edgar/data/1409970/000119312514173269/d719822d424b3.htm.
+
+“Your Return: Three Key Factors.” LendingClub, LendingClub Corporation, 2020,  
+www.lendingclub.com/investing/investment-performance.
